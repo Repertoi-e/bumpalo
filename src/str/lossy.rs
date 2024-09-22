@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::collections::str as core_str;
+use crate::str as core_str;
 use core::char;
 use core::fmt;
 use core::fmt::Write;

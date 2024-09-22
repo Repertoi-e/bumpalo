@@ -1,18 +1,12 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_debug_implementations)]
 #![deny(missing_docs)]
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(feature = "allocator_api", feature(allocator_api))]
+#![feature(allocator_api)]
 
-#[doc(hidden)]
 pub extern crate alloc as core_alloc;
 
-#[cfg(feature = "boxed")]
-pub mod boxed;
-#[cfg(feature = "collections")]
-pub mod collections;
-
-mod alloc;
+mod herd;
+pub use herd::*;
 
 use core::cell::Cell;
 use core::fmt::Display;
@@ -23,20 +17,13 @@ use core::ptr::{self, NonNull};
 use core::slice;
 use core::str;
 use core_alloc::alloc::{alloc, dealloc, Layout};
-
-#[cfg(feature = "allocator_api")]
 use core_alloc::alloc::{AllocError, Allocator};
-
-#[cfg(all(feature = "allocator-api2", not(feature = "allocator_api")))]
-use allocator_api2::alloc::{AllocError, Allocator};
-
-pub use alloc::AllocErr;
 
 /// An error returned from [`Bump::try_alloc_try_with`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum AllocOrInitError<E> {
     /// Indicates that the initial allocation failed.
-    Alloc(AllocErr),
+    Alloc(AllocError),
     /// Indicates that the initializer failed with the contained error after
     /// allocation.
     ///
@@ -44,8 +31,8 @@ pub enum AllocOrInitError<E> {
     /// released back to the allocator at this point.
     Init(E),
 }
-impl<E> From<AllocErr> for AllocOrInitError<E> {
-    fn from(e: AllocErr) -> Self {
+impl<E> From<AllocError> for AllocOrInitError<E> {
+    fn from(e: AllocError) -> Self {
         Self::Alloc(e)
     }
 }
@@ -481,8 +468,8 @@ struct NewChunkMemoryDetails {
 
 /// Wrapper around `Layout::from_size_align` that adds debug assertions.
 #[inline]
-fn layout_from_size_align(size: usize, align: usize) -> Result<Layout, AllocErr> {
-    Layout::from_size_align(size, align).map_err(|_| AllocErr)
+fn layout_from_size_align(size: usize, align: usize) -> Result<Layout, AllocError> {
+    Layout::from_size_align(size, align).map_err(|_| AllocError)
 }
 
 #[inline(never)]
@@ -511,7 +498,7 @@ impl Bump {
     /// let bump = bumpalo::Bump::try_new();
     /// # let _ = bump.unwrap();
     /// ```
-    pub fn try_new() -> Result<Bump, AllocErr> {
+    pub fn try_new() -> Result<Bump, AllocError> {
         Bump::try_with_capacity(0)
     }
 
@@ -535,7 +522,7 @@ impl Bump {
     /// let bump = bumpalo::Bump::try_with_capacity(100);
     /// # let _ = bump.unwrap();
     /// ```
-    pub fn try_with_capacity(capacity: usize) -> Result<Self, AllocErr> {
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, AllocError> {
         if capacity == 0 {
             return Ok(Bump {
                 current_chunk_footer: Cell::new(EMPTY_CHUNK.get()),
@@ -547,11 +534,11 @@ impl Bump {
 
         let chunk_footer = unsafe {
             Self::new_chunk(
-                Bump::new_chunk_memory_details(None, layout).ok_or(AllocErr)?,
+                Bump::new_chunk_memory_details(None, layout).ok_or(AllocError)?,
                 layout,
                 EMPTY_CHUNK.get(),
             )
-            .ok_or(AllocErr)?
+            .ok_or(AllocError)?
         };
 
         Ok(Bump {
@@ -828,7 +815,7 @@ impl Bump {
     /// assert_eq!(x, Ok(&mut "hello"));
     /// ```
     #[inline(always)]
-    pub fn try_alloc<T>(&self, val: T) -> Result<&mut T, AllocErr> {
+    pub fn try_alloc<T>(&self, val: T) -> Result<&mut T, AllocError> {
         self.try_alloc_with(|| val)
     }
 
@@ -904,7 +891,7 @@ impl Bump {
     /// assert_eq!(x, Ok(&mut "hello"));
     /// ```
     #[inline(always)]
-    pub fn try_alloc_with<F, T>(&self, f: F) -> Result<&mut T, AllocErr>
+    pub fn try_alloc_with<F, T>(&self, f: F) -> Result<&mut T, AllocError>
     where
         F: FnOnce() -> T,
     {
@@ -1402,11 +1389,11 @@ impl Bump {
     ///
     /// Errors if reserving space matching `layout` fails.
     #[inline(always)]
-    pub fn try_alloc_layout(&self, layout: Layout) -> Result<NonNull<u8>, AllocErr> {
+    pub fn try_alloc_layout(&self, layout: Layout) -> Result<NonNull<u8>, AllocError> {
         if let Some(p) = self.try_alloc_layout_fast(layout) {
             Ok(p)
         } else {
-            self.alloc_layout_slow(layout).ok_or(AllocErr)
+            self.alloc_layout_slow(layout).ok_or(AllocError)
         }
     }
 
@@ -1717,7 +1704,7 @@ impl Bump {
         ptr: NonNull<u8>,
         old_layout: Layout,
         new_layout: Layout,
-    ) -> Result<NonNull<u8>, AllocErr> {
+    ) -> Result<NonNull<u8>, AllocError> {
         // If the new layout demands greater alignment than the old layout has,
         // then either
         //
@@ -1735,7 +1722,7 @@ impl Bump {
             if is_pointer_aligned_to(ptr.as_ptr(), new_layout.align()) {
                 return Ok(ptr);
             } else {
-                return Err(AllocErr);
+                return Err(AllocError);
             }
         }
 
@@ -1805,7 +1792,7 @@ impl Bump {
         ptr: NonNull<u8>,
         old_layout: Layout,
         new_layout: Layout,
-    ) -> Result<NonNull<u8>, AllocErr> {
+    ) -> Result<NonNull<u8>, AllocError> {
         let old_size = old_layout.size();
         let new_size = new_layout.size();
         let align_is_compatible = old_layout.align() >= new_layout.align();
@@ -1902,40 +1889,6 @@ fn oom() -> ! {
     panic!("out of memory")
 }
 
-unsafe impl<'a> alloc::Alloc for &'a Bump {
-    #[inline(always)]
-    unsafe fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>, AllocErr> {
-        self.try_alloc_layout(layout)
-    }
-
-    #[inline]
-    unsafe fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
-        Bump::dealloc(self, ptr, layout);
-    }
-
-    #[inline]
-    unsafe fn realloc(
-        &mut self,
-        ptr: NonNull<u8>,
-        layout: Layout,
-        new_size: usize,
-    ) -> Result<NonNull<u8>, AllocErr> {
-        let old_size = layout.size();
-
-        if old_size == 0 {
-            return self.try_alloc_layout(layout);
-        }
-
-        let new_layout = layout_from_size_align(new_size, layout.align())?;
-        if new_size <= old_size {
-            self.shrink(ptr, layout, new_layout)
-        } else {
-            self.grow(ptr, layout, new_layout)
-        }
-    }
-}
-
-#[cfg(any(feature = "allocator_api", feature = "allocator-api2"))]
 unsafe impl<'a> Allocator for &'a Bump {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
